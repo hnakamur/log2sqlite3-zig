@@ -11,11 +11,16 @@ pub fn build(b: *std.build.Builder) void {
     // between Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall.
     const mode = b.standardReleaseOptions();
 
+    const sqlite = b.addStaticLibrary("sqlite", null);
+    sqlite.addCSourceFile("deps/zig-sqlite/c/sqlite3.c", &[_][]const u8{"-std=c99"});
+    sqlite.addIncludeDir("deps/zig-sqlite/c");
+    sqlite.linkLibC();
+
     const exe = b.addExecutable("log2sqlite3-zig", "src/main.zig");
     exe.setTarget(target);
     exe.setBuildMode(mode);
     exe.linkLibC();
-    exe.linkSystemLibrary("sqlite3");
+    exe.linkLibrary(sqlite);
     exe.addPackage(.{ .name = "sqlite", .source = .{ .path = "deps/zig-sqlite/sqlite.zig" } });
     exe.install();
 
