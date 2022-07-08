@@ -14,6 +14,9 @@ pub fn build(b: *std.build.Builder) void {
     const exe = b.addExecutable("log2sqlite3-zig", "src/main.zig");
     exe.setTarget(target);
     exe.setBuildMode(mode);
+    exe.linkLibC();
+    exe.linkSystemLibrary("sqlite3");
+    exe.addPackage(.{ .name = "sqlite", .source = .{ .path = "deps/zig-sqlite/sqlite.zig" } });
     exe.install();
 
     const run_cmd = exe.run();
