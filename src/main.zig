@@ -12,7 +12,7 @@ fn showUsage(comptime Id: type, params: []const clap.Param(Id)) !void {
     const stderr = std.io.getStdErr().writer();
     try std.fmt.format(
         stderr,
-        "Usage: {s} [options] [argsuments...]\n\n",
+        "Usage: {s} [options] [arguments...]\n\n",
         .{std.fs.path.basename(std.mem.span(std.os.argv[0]))},
     );
     return clap.help(stderr, Id, params, .{});
@@ -70,17 +70,63 @@ pub fn main() anyerror!void {
     const file = try std.fs.cwd().openFile(input_filename, .{});
     defer file.close();
 
-    // const allocator = std.heap.page_allocator;
+    const allocator = std.heap.page_allocator;
+    var labels = json.StringList{};
+    defer json.deinitStringList(&labels, allocator);
+    var values = json.StringList{};
+    defer json.deinitStringList(&values, allocator);
 
     var buffer: [4096]u8 = undefined;
     const reader = file.reader();
+    var leftover: usize = 0;
     while (true) {
-        const n = try reader.read(&buffer);
+        var n = try reader.read(buffer[leftover..]);
         if (n == 0) {
             break;
         }
+        n += leftover;
+        leftover = 0;
 
-        debug.print("{s}", .{buffer[0..n]});
+        var pos: usize = 0;
+        while (pos < n) {
+            if (std.mem.indexOfScalarPos(u8, buffer[0..n], pos, '\n')) |lf_pos| {
+                debug.print("line=[{s}]\n", .{buffer[pos..lf_pos]});
+                _ = try json.parseLine(allocator, buffer[pos..lf_pos], &labels, &values);
+                debug.print("labels=", .{});
+                for (labels.items) |*label, i| {
+                    if (i > 0) {
+                        debug.print(", ", .{});
+                    }
+                    debug.print("{s}", .{label.bytes});
+                }
+                debug.print("\n", .{});
+
+                debug.print("values=", .{});
+                for (values.items) |*value, i| {
+                    if (i > 0) {
+                        debug.print(", ", .{});
+                    }
+                    debug.print("{s}", .{value.bytes});
+                }
+                debug.print("\n", .{});
+
+                json.deinitStringListItems(&labels, allocator);
+                try labels.resize(allocator, 0);
+                json.deinitStringListItems(&values, allocator);
+                try values.resize(allocator, 0);
+                pos = lf_pos + 1;
+            } else {
+                if (pos == 0 and n == buffer.len) {
+                    return error.TooLongJsonLine;
+                }
+                std.mem.copy(u8, buffer[0..], buffer[pos .. n]);
+                leftover = n - pos;
+                break;
+            }
+        }
+    }
+    if (leftover > 0) {
+        debug.print("last_line_without_newline=[{s}]\n", .{buffer[0..leftover]});
     }
 
     // var db = try sqlite.Db.init(.{
