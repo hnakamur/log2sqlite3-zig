@@ -1,3 +1,6 @@
 [submodule "deps/zig-sqlite"]
 	path = deps/zig-sqlite
 	url = https://github.com/vrischmann/zig-sqlite
+[submodule "deps/zig-clap"]
+	path = deps/zig-clap
+	url = https://github.com/Hejsil/zig-clap
