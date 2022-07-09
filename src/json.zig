@@ -3,10 +3,9 @@ const testing = std.testing;
 
 pub const String = struct {
     bytes: []const u8 = "",
-    owns: bool = false,
 
     pub fn deinit(self: *String, allocator: std.mem.Allocator) void {
-        if (self.owns) allocator.free(self.bytes);
+        allocator.free(self.bytes);
     }
 
     pub fn eql(self: *const String, other: *const String) bool {
@@ -39,19 +38,18 @@ pub fn eqlStringList(list1: *const StringList, list2: *const StringList) bool {
 
 test "eqlStringList" {
     testing.log_level = .debug;
-    const allocator = std.testing.allocator;
 
-    var list1 = StringList{};
-    defer deinitStringList(&list1, allocator);
-    try list1.append(allocator, .{ .bytes = "foo" });
+    var list1_items = [_]String{
+        .{ .bytes = "foo" },
+        .{ .bytes = "bar" },
+    };
+    var list1 = StringList{.items = list1_items[0..]};
 
-    var list2 = StringList{};
-    defer deinitStringList(&list2, allocator);
-    {
-        const foo_copy = try allocator.dupe(u8, "foo");
-        errdefer allocator.free(foo_copy);
-        try list2.append(allocator, .{ .bytes = foo_copy, .owns = true });
-    }
+    var list2_items = [_]String{
+        .{ .bytes = "foo" },
+        .{ .bytes = "bar" },
+    };
+    var list2 = StringList{.items = list2_items[0..]};
 
     try testing.expect(eqlStringList(&list1, &list2));
 }
@@ -93,7 +91,7 @@ fn parseString(
     const start = try expectPrefixPos(input, 0, "\"");
     if (std.mem.indexOfAnyPos(u8, input, start, "\"\\")) |pos| {
         if (input[pos] == '"') {
-            out_string.bytes = input[start..pos];
+            out_string.bytes = try allocator.dupe(u8, input[start..pos]);
             return pos + 1;
         }
 
@@ -149,7 +147,7 @@ fn parseString(
                 else => try bytes.append(allocator, input[i]),
             }
         }
-        out_string.* = .{ .bytes = bytes.toOwnedSlice(allocator), .owns = true };
+        out_string.bytes = bytes.toOwnedSlice(allocator);
         return i;
     } else return error.InvalidJson;
 }
@@ -167,7 +165,6 @@ test "parseString" {
         const got_pos = try parseString(allocator, input, &got);
         try testing.expectEqual(input.len, got_pos);
         try testing.expectEqualStrings("foo", got.bytes);
-        try testing.expectEqual(false, got.owns);
     }
     {
         const input =
@@ -178,7 +175,6 @@ test "parseString" {
         const got_pos = try parseString(allocator, input, &got);
         try testing.expectEqual(input.len, got_pos);
         try testing.expectEqualStrings("foo\"\\/\x08\x0C\r\t\xE3\x81\x82", got.bytes);
-        try testing.expectEqual(true, got.owns);
     }
     {
         const input =
@@ -189,7 +185,6 @@ test "parseString" {
         const got_pos = try parseString(allocator, input, &got);
         try testing.expectEqual(input.len, got_pos);
         try testing.expectEqualStrings("foo\"\\/\x08\x0C\r\t\xE3\x81\x82\xF0\x9D\x84\x9E", got.bytes);
-        try testing.expectEqual(true, got.owns);
     }
 }
 
@@ -214,7 +209,6 @@ pub fn parseLine(
         {
             var s = String{};
             errdefer s.deinit(allocator);
-            // std.debug.print("parsing label from [{s}]\n", .{line[i..]});
             i = try parseStringPos(allocator, line, i, &s);
             try labels.append(allocator, s);
         }
@@ -224,7 +218,6 @@ pub fn parseLine(
         {
             var s = String{};
             errdefer s.deinit(allocator);
-            // std.debug.print("parsing value from [{s}]\n", .{line[i..]});
             i = try parseStringPos(allocator, line, i, &s);
             try values.append(allocator, s);
         }

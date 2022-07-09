@@ -14,10 +14,7 @@ pub fn build(b: *std.build.Builder) void {
     const exe = b.addExecutable("log2sqlite3-zig", "src/main.zig");
     exe.setTarget(target);
     exe.setBuildMode(mode);
-    exe.linkLibC();
-    exe.linkSystemLibrary("sqlite3");
-    exe.addPackage(.{ .name = "sqlite", .source = .{ .path = "deps/zig-sqlite/sqlite.zig" } });
-    exe.addPackage(.{ .name = "clap", .source = .{ .path = "deps/zig-clap/clap.zig" } });
+    addPackages(exe);
     exe.install();
 
     const run_cmd = exe.run();
@@ -29,13 +26,31 @@ pub fn build(b: *std.build.Builder) void {
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);
 
-    const exe_tests = b.addTest("src/test_main.zig");
+    const exe_tests = b.addTest("src/main.zig");
     exe_tests.setTarget(target);
     exe_tests.setBuildMode(mode);
+    addPackages(exe_tests);
 
     const test_filter = b.option([]const u8, "test-filter", "Skip tests that do not match filter");
     exe_tests.filter = test_filter;
 
+    const coverage = b.option(bool, "test-coverage", "Generate test coverage") orelse false;
+    if (coverage) {
+        exe_tests.setExecCmd(&[_]?[]const u8{
+            "kcov",
+            "--include-path=./src",
+            "kcov-output", // output dir for kcov
+            null, // to get zig to use the --test-cmd-bin flag
+        });
+    }
+
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&exe_tests.step);
+}
+
+fn addPackages(step: *std.build.LibExeObjStep) void {
+    step.linkLibC();
+    step.linkSystemLibrary("sqlite3");
+    step.addPackage(.{ .name = "sqlite", .source = .{ .path = "deps/zig-sqlite/sqlite.zig" } });
+    step.addPackage(.{ .name = "clap", .source = .{ .path = "deps/zig-clap/clap.zig" } });
 }
