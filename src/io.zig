@@ -39,6 +39,9 @@ pub fn LineReader(comptime buffer_size: usize) type {
                 self.n = try reader.read(self.buffer[self.leftover..]);
                 if (self.n == 0) {
                     self.eof = true;
+                    if (self.leftover == 0) {
+                        return null;
+                    }
                 }
                 self.n += self.leftover;
                 self.leftover = 0;
@@ -49,6 +52,7 @@ pub fn LineReader(comptime buffer_size: usize) type {
 }
 
 test "LineReader" {
+    testing.log_level = .debug;
     {
         const input = "no_newline";
         var fbs = std.io.fixedBufferStream(input);
@@ -64,6 +68,24 @@ test "LineReader" {
         var line_reader = LineReader(8){};
         try testing.expectEqualStrings("line1", (try line_reader.readLine(reader)).?);
         try testing.expectEqualStrings("line2", (try line_reader.readLine(reader)).?);
+        try testing.expectEqual(@as(?[]const u8, null), try line_reader.readLine(reader));
+    }
+    {
+        const input = "line1\nline2\n";
+        var fbs = std.io.fixedBufferStream(input);
+        var reader = fbs.reader();
+        var line_reader = LineReader(8){};
+        try testing.expectEqualStrings("line1", (try line_reader.readLine(reader)).?);
+        try testing.expectEqualStrings("line2", (try line_reader.readLine(reader)).?);
+        try testing.expectEqual(@as(?[]const u8, null), try line_reader.readLine(reader));
+    }
+    {
+        const input = "1\n1234567\n";
+        var fbs = std.io.fixedBufferStream(input);
+        var reader = fbs.reader();
+        var line_reader = LineReader(8){};
+        try testing.expectEqualStrings("1", (try line_reader.readLine(reader)).?);
+        try testing.expectEqualStrings("1234567", (try line_reader.readLine(reader)).?);
         try testing.expectEqual(@as(?[]const u8, null), try line_reader.readLine(reader));
     }
     {
