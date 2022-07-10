@@ -20,13 +20,12 @@ pub fn createTable(allocator: std.mem.Allocator, db: *sqlite.Db, table_name: []c
     try db.execDynamic(buf.toOwnedSlice(), .{}, .{});
 }
 
-pub fn insertRecord(
+pub fn prepareInsertLog(
     allocator: std.mem.Allocator,
     db: *sqlite.Db,
     table_name: []const u8,
     columns: [][]const u8,
-    values: [][]const u8,
-) !void {
+) !sqlite.DynamicStatement{
     var buf = std.ArrayList(u8).init(allocator);
     defer buf.deinit();
 
@@ -40,7 +39,7 @@ pub fn insertRecord(
         try buf.appendSlice(column);
     }
     try buf.appendSlice(") VALUES (");
-    for (values) |_, i| {
+    for (columns) |_, i| {
         if (i > 0) {
             try buf.appendSlice(", ");
         }
@@ -48,5 +47,13 @@ pub fn insertRecord(
     }
     try buf.appendSlice(")");
 
-    try db.execDynamic(buf.toOwnedSlice(), .{}, values);
+    return db.prepareDynamic(buf.toOwnedSlice());
+}
+
+pub fn execInsertLog(
+    stmt: *sqlite.DynamicStatement,
+    values: [][]const u8,
+) !void {
+    try stmt.exec(.{}, values);
+    stmt.reset();
 }

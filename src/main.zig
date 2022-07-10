@@ -104,18 +104,21 @@ pub fn main() anyerror!void {
     var line_number: usize = 1;
     var line_reader = LineReader(4096){};
     const reader = file.reader();
+    var stmt: ?sqlite.DynamicStatement = null;
+    defer if (stmt) |*s| s.deinit();
     while (try line_reader.readLine(reader)) |line| {
         _ = try json.parseLine(allocator, line, &labels, &values);
 
         if (line_number == 1) {
             try sql.createTable(allocator, &db, table_name, labels.items);
+            stmt = try sql.prepareInsertLog(allocator, &db, table_name, labels.items);
         } else {
             if (!json.eqlStringList(labels.items[0..], first_line_labels.items[0..])) {
                 std.log.err("labels at line_number={} are different from labels at the first line", .{line_number});
             }
         }
 
-        try sql.insertRecord(allocator, &db, table_name, labels.items, values.items);
+        try sql.execInsertLog(&stmt.?, values.items);
 
         if (line_number == 1) {
             first_line_labels = labels;
