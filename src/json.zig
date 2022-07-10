@@ -1,22 +1,10 @@
 const std = @import("std");
 const testing = std.testing;
 
-pub const String = struct {
-    bytes: []const u8 = "",
-
-    pub fn deinit(self: *String, allocator: std.mem.Allocator) void {
-        allocator.free(self.bytes);
-    }
-
-    pub fn eql(self: *const String, other: *const String) bool {
-        return std.mem.eql(u8, self.bytes, other.bytes);
-    }
-};
-
-pub const StringList = std.ArrayListUnmanaged(String);
+pub const StringList = std.ArrayListUnmanaged([]const u8);
 
 pub fn deinitStringListItems(list: *StringList, allocator: std.mem.Allocator) void {
-    for (list.items) |*item| item.deinit(allocator);
+    for (list.items) |item| allocator.free(item);
 }
 
 pub fn deinitStringList(list: *StringList, allocator: std.mem.Allocator) void {
@@ -29,7 +17,7 @@ pub fn eqlStringList(list1: *const StringList, list2: *const StringList) bool {
         return false;
     }
     for (list1.items) |item1, i| {
-        if (!item1.eql(&list2.items[i])) {
+        if (!std.mem.eql(u8, item1, list2.items[i])) {
             return false;
         }
     }
@@ -39,17 +27,11 @@ pub fn eqlStringList(list1: *const StringList, list2: *const StringList) bool {
 test "eqlStringList" {
     testing.log_level = .debug;
 
-    var list1_items = [_]String{
-        .{ .bytes = "foo" },
-        .{ .bytes = "bar" },
-    };
-    var list1 = StringList{.items = list1_items[0..]};
+    var list1_items = [_][]const u8{ "foo", "bar" };
+    var list1 = StringList{ .items = list1_items[0..] };
 
-    var list2_items = [_]String{
-        .{ .bytes = "foo" },
-        .{ .bytes = "bar" },
-    };
-    var list2 = StringList{.items = list2_items[0..]};
+    var list2_items = [_][]const u8{ "foo", "bar" };
+    var list2 = StringList{ .items = list2_items[0..] };
 
     try testing.expect(eqlStringList(&list1, &list2));
 }
@@ -85,13 +67,13 @@ fn fourHexCharsToCodepoint(input: []const u8, start_index: usize, out_cp: *u21) 
 fn parseString(
     allocator: std.mem.Allocator,
     input: []const u8,
-    out_string: *String,
+    out_string: *[]const u8,
 ) !usize {
     _ = allocator;
     const start = try expectPrefixPos(input, 0, "\"");
     if (std.mem.indexOfAnyPos(u8, input, start, "\"\\")) |pos| {
         if (input[pos] == '"') {
-            out_string.bytes = try allocator.dupe(u8, input[start..pos]);
+            out_string.* = try allocator.dupe(u8, input[start..pos]);
             return pos + 1;
         }
 
@@ -147,7 +129,7 @@ fn parseString(
                 else => try bytes.append(allocator, input[i]),
             }
         }
-        out_string.bytes = bytes.toOwnedSlice(allocator);
+        out_string.* = bytes.toOwnedSlice(allocator);
         return i;
     } else return error.InvalidJson;
 }
@@ -160,31 +142,31 @@ test "parseString" {
         const input =
             \\"foo"
         ;
-        var got = String{};
-        defer got.deinit(allocator);
+        var got: []const u8 = "";
+        defer allocator.free(got);
         const got_pos = try parseString(allocator, input, &got);
         try testing.expectEqual(input.len, got_pos);
-        try testing.expectEqualStrings("foo", got.bytes);
+        try testing.expectEqualStrings("foo", got);
     }
     {
         const input =
             \\"foo\"\\\/\b\f\r\t\u3042"
         ;
-        var got = String{};
-        defer got.deinit(allocator);
+        var got: []const u8 = "";
+        defer allocator.free(got);
         const got_pos = try parseString(allocator, input, &got);
         try testing.expectEqual(input.len, got_pos);
-        try testing.expectEqualStrings("foo\"\\/\x08\x0C\r\t\xE3\x81\x82", got.bytes);
+        try testing.expectEqualStrings("foo\"\\/\x08\x0C\r\t\xE3\x81\x82", got);
     }
     {
         const input =
             \\"foo\"\\\/\b\f\r\t\u3042\uD834\uDD1E"
         ;
-        var got = String{};
-        defer got.deinit(allocator);
+        var got: []const u8 = "";
+        defer allocator.free(got);
         const got_pos = try parseString(allocator, input, &got);
         try testing.expectEqual(input.len, got_pos);
-        try testing.expectEqualStrings("foo\"\\/\x08\x0C\r\t\xE3\x81\x82\xF0\x9D\x84\x9E", got.bytes);
+        try testing.expectEqualStrings("foo\"\\/\x08\x0C\r\t\xE3\x81\x82\xF0\x9D\x84\x9E", got);
     }
 }
 
@@ -192,7 +174,7 @@ fn parseStringPos(
     allocator: std.mem.Allocator,
     input: []const u8,
     start_index: usize,
-    out_string: *String,
+    out_string: *[]const u8,
 ) !usize {
     return (try parseString(allocator, input[start_index..], out_string)) + start_index;
 }
@@ -207,8 +189,8 @@ pub fn parseLine(
 
     while (true) {
         {
-            var s = String{};
-            errdefer s.deinit(allocator);
+            var s: []const u8 = "";
+            errdefer allocator.free(s);
             i = try parseStringPos(allocator, line, i, &s);
             try labels.append(allocator, s);
         }
@@ -216,8 +198,8 @@ pub fn parseLine(
         i = try expectPrefixPos(line, i, ":");
 
         {
-            var s = String{};
-            errdefer s.deinit(allocator);
+            var s: []const u8 = "";
+            errdefer allocator.free(s);
             i = try parseStringPos(allocator, line, i, &s);
             try values.append(allocator, s);
         }
@@ -243,18 +225,12 @@ test "parseLine" {
     ;
     const pos = try parseLine(allocator, input, &labels, &values);
 
-    var want_label_items = [_]String{
-        .{ .bytes = "foo" },
-        .{ .bytes = "bar" },
-    };
+    var want_label_items = [_][]const u8{ "foo", "bar" };
     const want_labels = StringList{
         .items = want_label_items[0..],
     };
 
-    var want_value_items = [_]String{
-        .{ .bytes = "123" },
-        .{ .bytes = "GET / HTTP/1.1" },
-    };
+    var want_value_items = [_][]const u8{ "123", "GET / HTTP/1.1" };
     const want_values = StringList{
         .items = want_value_items[0..],
     };
