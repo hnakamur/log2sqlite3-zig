@@ -55,5 +55,5 @@ pub fn execInsertLog(
     values: [][]const u8,
 ) !void {
     try stmt.exec(.{}, values);
-    stmt.reset();
+        stmt.reset();
 }
