@@ -25,6 +25,7 @@ pub fn main() anyerror!void {
         \\--db <str>             Database source name or simply database filename.
         \\--table <str>          Table name to create or to append records to.
         \\--format <str>         Choose a log format from "ndjson" (default) or "ltsv".
+        \\--batch <usize>        Batch size of insert operations in a transaction (default: 1000).
         \\-h, --help             Display this help and exit.
         \\--version              Show version and exit.
         \\<str>...
@@ -52,6 +53,11 @@ pub fn main() anyerror!void {
     } else {
         try std.fmt.format(std.io.getStdErr().writer(), "Option \"--table\" is required.\n\n", .{});
         return clap.help(std.io.getStdErr().writer(), clap.Help, &params, .{});
+    }
+
+    var batch_size: usize = 1000;
+    if (res.args.batch) |b| {
+        batch_size = b;
     }
 
     // const log_fmt = if (res.args.format) |fmt| blk: {
@@ -104,8 +110,13 @@ pub fn main() anyerror!void {
     var line_number: usize = 1;
     var line_reader = LineReader(4096){};
     const reader = file.reader();
+
     var stmt: ?sqlite.DynamicStatement = null;
     defer if (stmt) |*s| s.deinit();
+
+    var savepoint: ?sqlite.Savepoint = null;
+    defer if (savepoint) |*sp| sp.rollback();
+
     while (try line_reader.readLine(reader)) |line| {
         _ = try json.parseLine(allocator, line, &labels, &values);
 
@@ -118,7 +129,14 @@ pub fn main() anyerror!void {
             }
         }
 
+        if (savepoint == null) {
+            savepoint = try db.savepoint("insert_logs");
+        }
         try sql.execInsertLog(&stmt.?, values.items);
+        if (line_number % batch_size == 0) {
+            savepoint.?.commit();
+            savepoint = null;
+        }
 
         if (line_number == 1) {
             first_line_labels = labels;
@@ -131,4 +149,5 @@ pub fn main() anyerror!void {
         values.items.len = 0;
         line_number += 1;
     }
+    if (savepoint) |*sp| sp.commit();
 }
