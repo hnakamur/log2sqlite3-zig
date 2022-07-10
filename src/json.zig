@@ -12,12 +12,12 @@ pub fn deinitStringList(list: *StringList, allocator: std.mem.Allocator) void {
     list.deinit(allocator);
 }
 
-pub fn eqlStringList(list1: *const StringList, list2: *const StringList) bool {
-    if (list1.items.len != list2.items.len) {
+pub fn eqlStringList(list1: []const []const u8, list2: []const []const u8) bool {
+    if (list1.len != list2.len) {
         return false;
     }
-    for (list1.items) |item1, i| {
-        if (!std.mem.eql(u8, item1, list2.items[i])) {
+    for (list1) |item1, i| {
+        if (!std.mem.eql(u8, item1, list2[i])) {
             return false;
         }
     }
@@ -27,13 +27,9 @@ pub fn eqlStringList(list1: *const StringList, list2: *const StringList) bool {
 test "eqlStringList" {
     testing.log_level = .debug;
 
-    var list1_items = [_][]const u8{ "foo", "bar" };
-    var list1 = StringList{ .items = list1_items[0..] };
-
-    var list2_items = [_][]const u8{ "foo", "bar" };
-    var list2 = StringList{ .items = list2_items[0..] };
-
-    try testing.expect(eqlStringList(&list1, &list2));
+    var list1 = &[_][]const u8{ "foo", "bar" };
+    var list2 = &[_][]const u8{ "foo", "bar" };
+    try testing.expect(eqlStringList(list1, list2));
 }
 
 pub fn startsWithPos(string: []const u8, start_index: usize, prefix: []const u8) bool {
@@ -225,17 +221,9 @@ test "parseLine" {
     ;
     const pos = try parseLine(allocator, input, &labels, &values);
 
-    var want_label_items = [_][]const u8{ "foo", "bar" };
-    const want_labels = StringList{
-        .items = want_label_items[0..],
-    };
-
-    var want_value_items = [_][]const u8{ "123", "GET / HTTP/1.1" };
-    const want_values = StringList{
-        .items = want_value_items[0..],
-    };
-
+    const want_labels = &[_][]const u8{ "foo", "bar" };
+    const want_values = &[_][]const u8{ "123", "GET / HTTP/1.1" };
     try std.testing.expectEqual(input.len, pos);
-    try std.testing.expect(eqlStringList(&want_labels, &labels));
-    try std.testing.expect(eqlStringList(&want_values, &values));
+    try std.testing.expect(eqlStringList(want_labels, labels.items[0..]));
+    try std.testing.expect(eqlStringList(want_values, values.items[0..]));
 }

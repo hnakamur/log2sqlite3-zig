@@ -93,6 +93,9 @@ pub fn main() anyerror!void {
     });
     defer db.deinit();
 
+    var first_line_labels = json.StringList{};
+    defer json.deinitStringList(&first_line_labels, allocator);
+
     var labels = json.StringList{};
     defer json.deinitStringList(&labels, allocator);
     var values = json.StringList{};
@@ -102,42 +105,27 @@ pub fn main() anyerror!void {
     var line_reader = LineReader(4096){};
     const reader = file.reader();
     while (try line_reader.readLine(reader)) |line| {
-        debug.print("line=[{s}]\n", .{line});
         _ = try json.parseLine(allocator, line, &labels, &values);
-        debug.print("labels=", .{});
-        for (labels.items) |*label, i| {
-            if (i > 0) {
-                debug.print(", ", .{});
-            }
-            debug.print("{s}", .{label.bytes});
-        }
-        debug.print("\n", .{});
-
-        debug.print("values=", .{});
-        for (values.items) |*value, i| {
-            if (i > 0) {
-                debug.print(", ", .{});
-            }
-            debug.print("{s}", .{value.bytes});
-        }
-        debug.print("\n", .{});
 
         if (line_number == 1) {
-            // try sql.createTable(allocator, db, table_name, labels.items);
+            try sql.createTable(allocator, &db, table_name, labels.items);
+        } else {
+            if (!json.eqlStringList(labels.items[0..], first_line_labels.items[0..])) {
+                std.log.err("labels at line_number={} are different from labels at the first line", .{line_number});
+            }
         }
 
-        json.deinitStringListItems(&labels, allocator);
-        labels.items.len = 0;
+        try sql.insertRecord(allocator, &db, table_name, labels.items, values.items);
+
+        if (line_number == 1) {
+            first_line_labels = labels;
+            labels = json.StringList{};
+        } else {
+            json.deinitStringListItems(&labels, allocator);
+            labels.items.len = 0;
+        }
         json.deinitStringListItems(&values, allocator);
         values.items.len = 0;
+        line_number += 1;
     }
-
-    // const query =
-    //     \\CREATE TABLE IF NOT EXISTS table1 (col1 TEXT)
-    // ;
-
-    // var stmt = try db.prepare(query);
-    // defer stmt.deinit();
-
-    // try stmt.exec(.{}, .{});
 }
