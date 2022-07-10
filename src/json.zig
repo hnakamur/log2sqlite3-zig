@@ -265,7 +265,7 @@ pub fn parseLine(
     allocator: std.mem.Allocator,
     line: []const u8,
     out_result: *ParseResult,
-) !usize {
+) !void {
     var i = try expectPrefixPos(line, 0, "{");
     try out_result.setLine(allocator, line);
 
@@ -288,21 +288,33 @@ pub fn parseLine(
         }
     }
 
-    return try expectPrefixPos(out_result.line_buf.items, i, "}");
+    i = try expectPrefixPos(out_result.line_buf.items, i, "}");
+    if (i != line.len) {
+        return error.LeftoverAfterJson;
+    }
 }
 
 test "parseLine" {
     const allocator = std.testing.allocator;
-    var result = ParseResult{};
-    defer result.deinit(allocator);
-    const input =
-        \\{"foo":"123","bar":"GET \/ HTTP\/1.1"}
-    ;
-    const pos = try parseLine(allocator, input, &result);
+    {
+        var result = ParseResult{};
+        defer result.deinit(allocator);
+        const input =
+            \\{"foo":"123","bar":"GET \/ HTTP\/1.1"}
+        ;
+        try parseLine(allocator, input, &result);
 
-    const want_labels = [_][]const u8{ "foo", "bar" };
-    const want_values = [_][]const u8{ "123", "GET / HTTP/1.1" };
-    try std.testing.expectEqual(input.len, pos);
-    try std.testing.expect(eqlStringList(want_labels[0..], result.labels.items));
-    try std.testing.expect(eqlStringList(want_values[0..], result.values.items));
+        const want_labels = [_][]const u8{ "foo", "bar" };
+        const want_values = [_][]const u8{ "123", "GET / HTTP/1.1" };
+        try std.testing.expect(eqlStringList(want_labels[0..], result.labels.items));
+        try std.testing.expect(eqlStringList(want_values[0..], result.values.items));
+    }
+    {
+        var result = ParseResult{};
+        defer result.deinit(allocator);
+        const input =
+            \\{"foo":"123","bar":"GET \/ HTTP\/1.1"}a
+        ;
+        try std.testing.expectError(error.LeftoverAfterJson, parseLine(allocator, input, &result));
+    }
 }
