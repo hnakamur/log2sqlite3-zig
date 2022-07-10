@@ -2,7 +2,8 @@ const std = @import("std");
 const clap = @import("clap");
 const sqlite = @import("sqlite");
 const LineReader = @import("io.zig").LineReader;
-const json = @import("json.zig");
+const ndjson = @import("ndjson.zig");
+const eqlStringList = @import("string.zig").eqlStringList;
 const sql = @import("sql.zig");
 
 const debug = std.debug;
@@ -99,10 +100,10 @@ pub fn main() anyerror!void {
     });
     defer db.deinit();
 
-    var first_line_result = json.ParseResult{};
-    defer first_line_result.deinit(allocator);
-    var line_result = json.ParseResult{};
-    defer line_result.deinit(allocator);
+    var first_line_parser = ndjson.Parser{};
+    defer first_line_parser.deinit(allocator);
+    var line_parser = ndjson.Parser{};
+    defer line_parser.deinit(allocator);
 
     var line_number: usize = 1;
     var line_reader = LineReader(4096){};
@@ -115,13 +116,13 @@ pub fn main() anyerror!void {
     defer if (savepoint) |*sp| sp.rollback();
 
     while (try line_reader.readLine(reader)) |line| {
-        _ = try json.parseLine(allocator, line, &line_result);
+        try line_parser.parseLine(allocator, line);
 
         if (line_number == 1) {
-            try sql.createTable(allocator, &db, table_name, line_result.labels.items);
-            stmt = try sql.prepareInsertLog(allocator, &db, table_name, line_result.labels.items);
+            try sql.createTable(allocator, &db, table_name, line_parser.labels.items);
+            stmt = try sql.prepareInsertLog(allocator, &db, table_name, line_parser.labels.items);
         } else {
-            if (!json.eqlStringList(line_result.labels.items[0..], first_line_result.labels.items[0..])) {
+            if (!eqlStringList(line_parser.labels.items[0..], first_line_parser.labels.items[0..])) {
                 std.log.err("labels at line_number={} are different from labels at the first line", .{line_number});
             }
         }
@@ -129,15 +130,15 @@ pub fn main() anyerror!void {
         if (savepoint == null) {
             savepoint = try db.savepoint("insert_logs");
         }
-        try sql.execInsertLog(&stmt.?, line_result.values.items);
+        try sql.execInsertLog(&stmt.?, line_parser.values.items);
         if (line_number % batch_size == 0) {
             savepoint.?.commit();
             savepoint = null;
         }
 
         if (line_number == 1) {
-            first_line_result = line_result;
-            line_result = json.ParseResult{};
+            first_line_parser = line_parser;
+            line_parser = ndjson.Parser{};
         }
         line_number += 1;
     }
