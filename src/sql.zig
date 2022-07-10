@@ -25,7 +25,7 @@ pub fn prepareInsertLog(
     db: *sqlite.Db,
     table_name: []const u8,
     columns: [][]const u8,
-) !sqlite.DynamicStatement{
+) !sqlite.DynamicStatement {
     var buf = std.ArrayList(u8).init(allocator);
     defer buf.deinit();
 
@@ -55,5 +55,5 @@ pub fn execInsertLog(
     values: [][]const u8,
 ) !void {
     try stmt.exec(.{}, values);
-        stmt.reset();
+    stmt.reset();
 }

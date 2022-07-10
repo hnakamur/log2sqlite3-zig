@@ -99,13 +99,10 @@ pub fn main() anyerror!void {
     });
     defer db.deinit();
 
-    var first_line_labels = json.StringList{};
-    defer json.deinitStringList(&first_line_labels, allocator);
-
-    var labels = json.StringList{};
-    defer json.deinitStringList(&labels, allocator);
-    var values = json.StringList{};
-    defer json.deinitStringList(&values, allocator);
+    var first_line_result = json.ParseResult{};
+    defer first_line_result.deinit(allocator);
+    var line_result = json.ParseResult{};
+    defer line_result.deinit(allocator);
 
     var line_number: usize = 1;
     var line_reader = LineReader(4096){};
@@ -118,13 +115,13 @@ pub fn main() anyerror!void {
     defer if (savepoint) |*sp| sp.rollback();
 
     while (try line_reader.readLine(reader)) |line| {
-        _ = try json.parseLine(allocator, line, &labels, &values);
+        _ = try json.parseLine(allocator, line, &line_result);
 
         if (line_number == 1) {
-            try sql.createTable(allocator, &db, table_name, labels.items);
-            stmt = try sql.prepareInsertLog(allocator, &db, table_name, labels.items);
+            try sql.createTable(allocator, &db, table_name, line_result.labels.items);
+            stmt = try sql.prepareInsertLog(allocator, &db, table_name, line_result.labels.items);
         } else {
-            if (!json.eqlStringList(labels.items[0..], first_line_labels.items[0..])) {
+            if (!json.eqlStringList(line_result.labels.items[0..], first_line_result.labels.items[0..])) {
                 std.log.err("labels at line_number={} are different from labels at the first line", .{line_number});
             }
         }
@@ -132,21 +129,16 @@ pub fn main() anyerror!void {
         if (savepoint == null) {
             savepoint = try db.savepoint("insert_logs");
         }
-        try sql.execInsertLog(&stmt.?, values.items);
+        try sql.execInsertLog(&stmt.?, line_result.values.items);
         if (line_number % batch_size == 0) {
             savepoint.?.commit();
             savepoint = null;
         }
 
         if (line_number == 1) {
-            first_line_labels = labels;
-            labels = json.StringList{};
-        } else {
-            json.deinitStringListItems(&labels, allocator);
-            labels.items.len = 0;
+            first_line_result = line_result;
+            line_result = json.ParseResult{};
         }
-        json.deinitStringListItems(&values, allocator);
-        values.items.len = 0;
         line_number += 1;
     }
     if (savepoint) |*sp| sp.commit();

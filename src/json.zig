@@ -10,75 +10,49 @@ pub const ParseResult = struct {
     // line followed by unescaped strings.
     line_buf: std.ArrayListUnmanaged(u8) = .{},
 
-    label_ranges: std.ArrayListUnmanaged(Range) = .{},
-    value_ranges: std.ArrayListUnmanaged(Range) = .{},
+    labels: std.ArrayListUnmanaged([]const u8) = .{},
+    values: std.ArrayListUnmanaged([]const u8) = .{},
 
     pub fn deinit(self: *ParseResult, allocator: std.mem.Allocator) void {
-        self.label_ranges.deinit(allocator);
-        self.value_ranges.deinit(allocator);
+        self.labels.deinit(allocator);
+        self.values.deinit(allocator);
         self.line_buf.deinit(allocator);
     }
 
-    pub fn setLine(self: *ParseResult, allocator: std.mem.Allocator, line: []const u8) !void {
-        self.label_ranges.items.len = 0;
-        self.value_ranges.items.len = 0;
+    fn setLine(self: *ParseResult, allocator: std.mem.Allocator, line: []const u8) !void {
+        self.labels.items.len = 0;
+        self.values.items.len = 0;
         self.line_buf.items.len = 0;
         try self.line_buf.appendSlice(allocator, line);
     }
 
-    pub fn appendUnescapedString(self: *ParseResult, allocator: std.mem.Allocator, s: []const u8) !u32 {
-        const start = self.line_buf.items.len;
-        try self.line_buf.appendSlice(allocator, s);
-        return @intCast(u32, start);
+    fn appendLabel(self: *ParseResult, allocator: std.mem.Allocator, old_line_buf_items_ptr: *u8, range: Range) !void {
+        self.fixLabelsAndValues(old_line_buf_items_ptr);
+        try self.labels.append(allocator, self.slice_unchecked(range));
     }
 
-    pub fn slice_unchecked(self: *const ParseResult, range: Range) []const u8 {
+    fn appendValue(self: *ParseResult, allocator: std.mem.Allocator, old_line_buf_items_ptr: *u8, range: Range) !void {
+        self.fixLabelsAndValues(old_line_buf_items_ptr);
+        try self.values.append(allocator, self.slice_unchecked(range));
+    }
+
+    fn fixLabelsAndValues(self: *ParseResult, old_line_buf_items_ptr: *u8) void {
+        const ptr_diff = @ptrToInt(&self.line_buf.items[0]) -% @ptrToInt(old_line_buf_items_ptr);
+        if (ptr_diff == 0) {
+            return;
+        }
+        for (self.labels.items) |*label| {
+            label.ptr += ptr_diff;
+        }
+        for (self.values.items) |*value| {
+            value.ptr += ptr_diff;
+        }
+    }
+
+    fn slice_unchecked(self: *const ParseResult, range: Range) []const u8 {
         return self.line_buf.items[range.start .. range.start + range.len];
     }
-
-    pub fn eqlLabels(self: *const ParseResult, other: *const ParseResult) bool {
-        if (self.label_ranges.items.len != other.label_ranges.items.len) {
-            return false;
-        }
-        for (self.label_ranges.items) |r, i| {
-            if (!std.mem.eql(
-                u8,
-                self.slice_unchecked(r),
-                other.slice_unchecked(other.label_ranges.items[i]),
-            )) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    pub fn eqlValues(self: *const ParseResult, other: *const ParseResult) bool {
-        if (self.value_ranges.items.len != other.value_ranges.items.len) {
-            return false;
-        }
-        for (self.value_ranges.items) |r, i| {
-            if (!std.mem.eql(
-                u8,
-                self.slice_unchecked(r),
-                other.slice_unchecked(other.value_ranges.items[i]),
-            )) {
-                return false;
-            }
-        }
-        return true;
-    }
 };
-
-pub const StringList = std.ArrayListUnmanaged([]const u8);
-
-pub fn deinitStringListItems(list: *StringList, allocator: std.mem.Allocator) void {
-    for (list.items) |item| allocator.free(item);
-}
-
-pub fn deinitStringList(list: *StringList, allocator: std.mem.Allocator) void {
-    deinitStringListItems(list, allocator);
-    list.deinit(allocator);
-}
 
 pub fn eqlStringList(list1: []const []const u8, list2: []const []const u8) bool {
     if (list1.len != list2.len) {
@@ -128,121 +102,7 @@ fn fourHexCharsToCodepoint(input: []const u8, start_index: usize, out_cp: *u21) 
     return start_index + 4;
 }
 
-fn parseString(
-    allocator: std.mem.Allocator,
-    input: []const u8,
-    out_string: *[]const u8,
-) !usize {
-    const start = try expectPrefixPos(input, 0, "\"");
-    if (std.mem.indexOfAnyPos(u8, input, start, "\"\\")) |pos| {
-        if (input[pos] == '"') {
-            out_string.* = try allocator.dupe(u8, input[start..pos]);
-            return pos + 1;
-        }
-
-        var bytes = std.ArrayListUnmanaged(u8){};
-        errdefer bytes.deinit(allocator);
-        try bytes.appendSlice(allocator, input[start..pos]);
-        var i: usize = pos;
-        while (i < input.len) : (i += 1) {
-            switch (input[i]) {
-                '"' => {
-                    i += 1;
-                    break;
-                },
-                '\\' => {
-                    i += 1;
-                    if (i == input.len) {
-                        return error.InvalidJson;
-                    }
-                    switch (input[i]) {
-                        '"', '\\', '/' => {
-                            try bytes.append(allocator, input[i]);
-                        },
-                        'b' => {
-                            try bytes.append(allocator, '\x08');
-                        },
-                        'f' => {
-                            try bytes.append(allocator, '\x0C');
-                        },
-                        'r' => {
-                            try bytes.append(allocator, '\r');
-                        },
-                        't' => {
-                            try bytes.append(allocator, '\t');
-                        },
-                        'u' => {
-                            var c: u21 = undefined;
-                            i = try fourHexCharsToCodepoint(input, i + 1, &c);
-                            if (c >= 0xD800 and c < 0xDC00) {
-                                i = try expectPrefixPos(input, i, "\\u");
-                                var c2: u21 = undefined;
-                                i = try fourHexCharsToCodepoint(input, i, &c2);
-                                c = 0x10000 + (((c & 0x03FF) << 10) | (c2 & 0x03FF));
-                            } else {
-                                i -= 1;
-                            }
-                            var buf: [4]u8 = undefined;
-                            const c_len = try std.unicode.utf8Encode(c, &buf);
-                            try bytes.appendSlice(allocator, buf[0..c_len]);
-                        },
-                        else => return error.InvalidJson,
-                    }
-                },
-                else => try bytes.append(allocator, input[i]),
-            }
-        }
-        out_string.* = bytes.toOwnedSlice(allocator);
-        return i;
-    } else return error.InvalidJson;
-}
-
-test "parseString" {
-    testing.log_level = .debug;
-    const allocator = std.testing.allocator;
-
-    {
-        const input =
-            \\"foo"
-        ;
-        var got: []const u8 = "";
-        defer allocator.free(got);
-        const got_pos = try parseString(allocator, input, &got);
-        try testing.expectEqual(input.len, got_pos);
-        try testing.expectEqualStrings("foo", got);
-    }
-    {
-        const input =
-            \\"foo\"\\\/\b\f\r\t\u3042"
-        ;
-        var got: []const u8 = "";
-        defer allocator.free(got);
-        const got_pos = try parseString(allocator, input, &got);
-        try testing.expectEqual(input.len, got_pos);
-        try testing.expectEqualStrings("foo\"\\/\x08\x0C\r\t\xE3\x81\x82", got);
-    }
-    {
-        const input =
-            \\"foo\"\\\/\b\f\r\t\u3042\uD834\uDD1E"
-        ;
-        var got: []const u8 = "";
-        defer allocator.free(got);
-        const got_pos = try parseString(allocator, input, &got);
-        try testing.expectEqual(input.len, got_pos);
-        try testing.expectEqualStrings("foo\"\\/\x08\x0C\r\t\xE3\x81\x82\xF0\x9D\x84\x9E", got);
-    }
-}
-
 fn parseStringPos(
-    allocator: std.mem.Allocator,
-    input: []const u8,
-    start_index: usize,
-    out_string: *[]const u8,
-) !usize {
-    return (try parseString(allocator, input[start_index..], out_string)) + start_index;
-}
-
-fn parseStringPos2(
     allocator: std.mem.Allocator,
     line_buf: *std.ArrayListUnmanaged(u8),
     line_len: usize,
@@ -321,7 +181,7 @@ fn parseStringPos2(
     } else return error.InvalidJson;
 }
 
-test "parseStringPos2" {
+test "parseStringPos" {
     testing.log_level = .debug;
     const allocator = std.testing.allocator;
 
@@ -333,7 +193,7 @@ test "parseStringPos2" {
         var line_buf = std.ArrayListUnmanaged(u8){};
         try line_buf.appendSlice(allocator, input);
         defer line_buf.deinit(allocator);
-        const got_pos = try parseStringPos2(allocator, &line_buf, input.len, 0, &got_range);
+        const got_pos = try parseStringPos(allocator, &line_buf, input.len, 0, &got_range);
         try testing.expectEqual(input.len, got_pos);
         try testing.expectEqual(@as(u32, "\"".len), got_range.start);
         try testing.expectEqualStrings(
@@ -349,7 +209,7 @@ test "parseStringPos2" {
         var line_buf = std.ArrayListUnmanaged(u8){};
         try line_buf.appendSlice(allocator, input);
         defer line_buf.deinit(allocator);
-        const got_pos = try parseStringPos2(allocator, &line_buf, input.len, 0, &got_range);
+        const got_pos = try parseStringPos(allocator, &line_buf, input.len, 0, &got_range);
         try testing.expectEqual(input.len, got_pos);
         try testing.expectEqual(input.len, got_range.start);
         try testing.expectEqualStrings(
@@ -365,7 +225,7 @@ test "parseStringPos2" {
         var line_buf = std.ArrayListUnmanaged(u8){};
         try line_buf.appendSlice(allocator, input);
         defer line_buf.deinit(allocator);
-        const got_pos = try parseStringPos2(allocator, &line_buf, input.len, 0, &got_range);
+        const got_pos = try parseStringPos(allocator, &line_buf, input.len, 0, &got_range);
         try testing.expectEqual(input.len, got_pos);
         try testing.expectEqual(input.len, got_range.start);
         try testing.expectEqualStrings(
@@ -382,7 +242,7 @@ test "parseStringPos2" {
         try line_buf.appendSlice(allocator, input);
         defer line_buf.deinit(allocator);
 
-        const got_pos = try parseStringPos2(allocator, &line_buf, input.len, 0, &got_range);
+        const got_pos = try parseStringPos(allocator, &line_buf, input.len, 0, &got_range);
         try testing.expectEqual("\"foo\"".len, got_pos);
         try testing.expectEqual(@as(u32, "\"".len), got_range.start);
         try testing.expectEqualStrings(
@@ -391,7 +251,7 @@ test "parseStringPos2" {
         );
 
         var got_range2: ParseResult.Range = undefined;
-        const got_pos2 = try parseStringPos2(allocator, &line_buf, input.len, "\"foo\"".len, &got_range2);
+        const got_pos2 = try parseStringPos(allocator, &line_buf, input.len, "\"foo\"".len, &got_range2);
         try testing.expectEqual(input.len, got_pos2);
         try testing.expectEqual(input.len, got_range2.start);
         try testing.expectEqualStrings(
@@ -401,7 +261,7 @@ test "parseStringPos2" {
     }
 }
 
-pub fn parseLine2(
+pub fn parseLine(
     allocator: std.mem.Allocator,
     line: []const u8,
     out_result: *ParseResult,
@@ -411,13 +271,15 @@ pub fn parseLine2(
 
     var range: ParseResult.Range = undefined;
     while (true) {
-        i = try parseStringPos2(allocator, &out_result.line_buf, line.len, i, &range);
-        try out_result.label_ranges.append(allocator, range);
+        var old_line_buf_items_ptr = &out_result.line_buf.items[0];
+        i = try parseStringPos(allocator, &out_result.line_buf, line.len, i, &range);
+        try out_result.appendLabel(allocator, old_line_buf_items_ptr, range);
 
         i = try expectPrefixPos(out_result.line_buf.items, i, ":");
 
-        i = try parseStringPos2(allocator, &out_result.line_buf, line.len, i, &range);
-        try out_result.value_ranges.append(allocator, range);
+        old_line_buf_items_ptr = &out_result.line_buf.items[0];
+        i = try parseStringPos(allocator, &out_result.line_buf, line.len, i, &range);
+        try out_result.appendValue(allocator, old_line_buf_items_ptr, range);
 
         if (startsWithPos(out_result.line_buf.items, i, ",")) {
             i += 1;
@@ -429,93 +291,18 @@ pub fn parseLine2(
     return try expectPrefixPos(out_result.line_buf.items, i, "}");
 }
 
-test "parseLine2" {
+test "parseLine" {
     const allocator = std.testing.allocator;
     var result = ParseResult{};
     defer result.deinit(allocator);
     const input =
         \\{"foo":"123","bar":"GET \/ HTTP\/1.1"}
     ;
-    const pos = try parseLine2(allocator, input, &result);
+    const pos = try parseLine(allocator, input, &result);
 
-    var want_labels_and_values = try allocator.dupe(u8, "foo123barGET / HTTP/1.1");
-    defer allocator.free(want_labels_and_values);
-    var label_ranges = [_]ParseResult.Range{
-        .{ .start = 0, .len = 3 },
-        .{ .start = 6, .len = 3 },
-    };
-    var value_ranges = [_]ParseResult.Range{
-        .{ .start = 3, .len = 3 },
-        .{ .start = 9, .len = 14 },
-    };
-    var want_result = ParseResult{
-        .line_buf = .{
-            .items = want_labels_and_values,
-            .capacity = want_labels_and_values.len,
-        },
-        .label_ranges = .{
-            .items = label_ranges[0..],
-            .capacity = 2,
-        },
-        .value_ranges = .{
-            .items = value_ranges[0..],
-            .capacity = 2,
-        },
-    };
+    const want_labels = [_][]const u8{ "foo", "bar" };
+    const want_values = [_][]const u8{ "123", "GET / HTTP/1.1" };
     try std.testing.expectEqual(input.len, pos);
-    try std.testing.expect(result.eqlLabels(&want_result));
-    try std.testing.expect(result.eqlValues(&want_result));
-}
-
-pub fn parseLine(
-    allocator: std.mem.Allocator,
-    line: []const u8,
-    labels: *StringList,
-    values: *StringList,
-) !usize {
-    var i = try expectPrefixPos(line, 0, "{");
-
-    while (true) {
-        {
-            var s: []const u8 = "";
-            errdefer allocator.free(s);
-            i = try parseStringPos(allocator, line, i, &s);
-            try labels.append(allocator, s);
-        }
-
-        i = try expectPrefixPos(line, i, ":");
-
-        {
-            var s: []const u8 = "";
-            errdefer allocator.free(s);
-            i = try parseStringPos(allocator, line, i, &s);
-            try values.append(allocator, s);
-        }
-
-        if (startsWithPos(line, i, ",")) {
-            i += 1;
-        } else {
-            break;
-        }
-    }
-
-    return try expectPrefixPos(line, i, "}");
-}
-
-test "parseLine" {
-    const allocator = std.testing.allocator;
-    var labels = StringList{};
-    defer deinitStringList(&labels, allocator);
-    var values = StringList{};
-    defer deinitStringList(&values, allocator);
-    const input =
-        \\{"foo":"123","bar":"GET \/ HTTP\/1.1"}
-    ;
-    const pos = try parseLine(allocator, input, &labels, &values);
-
-    const want_labels = &[_][]const u8{ "foo", "bar" };
-    const want_values = &[_][]const u8{ "123", "GET / HTTP/1.1" };
-    try std.testing.expectEqual(input.len, pos);
-    try std.testing.expect(eqlStringList(want_labels, labels.items[0..]));
-    try std.testing.expect(eqlStringList(want_values, values.items[0..]));
+    try std.testing.expect(eqlStringList(want_labels[0..], result.labels.items));
+    try std.testing.expect(eqlStringList(want_values[0..], result.values.items));
 }
