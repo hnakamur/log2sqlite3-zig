@@ -21,16 +21,36 @@ test "eqlStringList" {
     try testing.expect(eqlStringList(list1, list2));
 }
 
-pub fn hasCommonIgnoreCaseInOptCsv(csv1: ?[]const u8, csv2: ?[]const u8) bool {
-    if (csv1 == null or csv2 == null) {
-        return false;
+// Caller owned returned memory but each string references to slice of csv.
+// Caller needs to call allocator.free for returned value after use.
+pub fn parseOptionalCsv(csv: ?[]const u8, allocator: std.mem.Allocator) ![]const []const u8 {
+    if (csv == null) {
+        return ([_][]const u8{})[0..];
     }
+    var list = std.ArrayListUnmanaged([]const u8){};
+    errdefer list.deinit(allocator);
+    var iter = std.mem.tokenize(u8, csv.?, ", ");
+    while (iter.next()) |word| {
+        try list.append(allocator, word);
+    }
+    return list.toOwnedSlice(allocator);
+}
 
-    var iter1 = std.mem.tokenize(u8, csv1.?, ", ");
-    while (iter1.next()) |word1| {
-        var iter2 = std.mem.tokenize(u8, csv2.?, ", ");
-        while (iter2.next()) |word2| {
-            if (std.ascii.eqlIgnoreCase(word1, word2)) {
+test "parseOptionalCsv" {
+    const allocator = testing.allocator;
+    try testing.expect(eqlStringList(([_][]const u8{})[0..], try parseOptionalCsv(null, allocator)));
+
+    {
+        const list = try parseOptionalCsv("a, b", allocator);
+        defer allocator.free(list);
+        try testing.expect(eqlStringList(([_][]const u8{ "a", "b" })[0..], list));
+    }
+}
+
+pub fn hasCommonIgnoreCaseInStringList(list1: []const []const u8, list2: []const []const u8) bool {
+    for (list1) |s1| {
+        for (list2) |s2| {
+            if (std.ascii.eqlIgnoreCase(s1, s2)) {
                 return true;
             }
         }
@@ -38,57 +58,62 @@ pub fn hasCommonIgnoreCaseInOptCsv(csv1: ?[]const u8, csv2: ?[]const u8) bool {
     return false;
 }
 
-test "hasCommonIgnoreCaseInOptCsv" {
+test "hasCommonIgnoreCaseInStringList" {
     testing.log_level = .debug;
-    try testing.expect(!hasCommonIgnoreCaseInOptCsv(null, null));
-    try testing.expect(!hasCommonIgnoreCaseInOptCsv(null, ""));
-    try testing.expect(!hasCommonIgnoreCaseInOptCsv("a, b, c", "d,e"));
+    try testing.expect(!hasCommonIgnoreCaseInStringList(([_][]const u8{})[0..], ([_][]const u8{})[0..]));
+    try testing.expect(!hasCommonIgnoreCaseInStringList(([_][]const u8{})[0..], ([_][]const u8{"a"})[0..]));
+    try testing.expect(!hasCommonIgnoreCaseInStringList(
+        ([_][]const u8{ "a", "b", "c" })[0..],
+        ([_][]const u8{ "d", "e" })[0..],
+    ));
 
-    try testing.expect(hasCommonIgnoreCaseInOptCsv("a, b, c", "d,a"));
-    try testing.expect(hasCommonIgnoreCaseInOptCsv("a, b, c", "d,B"));
+    try testing.expect(hasCommonIgnoreCaseInStringList(
+        ([_][]const u8{ "a", "b", "c" })[0..],
+        ([_][]const u8{ "d", "a" })[0..],
+    ));
+    try testing.expect(hasCommonIgnoreCaseInStringList(
+        ([_][]const u8{ "a", "b", "c" })[0..],
+        ([_][]const u8{ "d", "B" })[0..],
+    ));
 }
 
-pub fn allValuesOptCsvInStringListIgnoreCase(csv: ?[]const u8, list: []const []const u8) bool {
-    if (csv == null) {
-        return true;
-    }
-    var iter = std.mem.tokenize(u8, csv.?, ", ");
-    outer: while (iter.next()) |word| {
-        for (list) |elem| {
-            std.log.debug("word={s}, elem={s}.", .{ word, elem });
-            if (std.ascii.eqlIgnoreCase(word, elem)) {
-                std.log.debug("word={s}, elem={s}. continue", .{ word, elem });
-                continue :outer;
-            }
-        }
-        return false;
-    }
-    return true;
-}
-
-test "allValuesOptCsvInStringListIgnoreCase" {
-    testing.log_level = .info;
-    try testing.expect(allValuesOptCsvInStringListIgnoreCase(null, ([_][]const u8{ "foo", "bar" })[0..]));
-    try testing.expect(allValuesOptCsvInStringListIgnoreCase("foo, bar", ([_][]const u8{ "foo", "bar", "baz" })[0..]));
-    try testing.expect(!allValuesOptCsvInStringListIgnoreCase("foo, huga", ([_][]const u8{ "foo", "bar", "baz" })[0..]));
-}
-
-pub fn optCsvContainsStringIgnoreCase(csv: ?[]const u8, s: []const u8) bool {
-    if (csv == null) {
-        return false;
-    }
-    var iter = std.mem.tokenize(u8, csv.?, ", ");
-    while (iter.next()) |word| {
-        if (std.ascii.eqlIgnoreCase(word, s)) {
+pub fn stringListContainsIgnoreCase(list: []const []const u8, elem: []const u8) bool {
+    for (list) |s| {
+        if (std.ascii.eqlIgnoreCase(s, elem)) {
             return true;
         }
     }
     return false;
 }
 
-test "optCsvContainsStringIgnoreCase" {
+test "stringListContainsIgnoreCase" {
     testing.log_level = .info;
-    try testing.expect(!optCsvContainsStringIgnoreCase(null, "foo"));
-    try testing.expect(optCsvContainsStringIgnoreCase("foo, bar", "foo"));
-    try testing.expect(!optCsvContainsStringIgnoreCase("foo, bar", "baz"));
+    try testing.expect(!stringListContainsIgnoreCase(([_][]const u8{})[0..], "foo"));
+    try testing.expect(stringListContainsIgnoreCase(([_][]const u8{ "foo", "bar" })[0..], "foo"));
+    try testing.expect(!stringListContainsIgnoreCase(([_][]const u8{ "foo", "bar" })[0..], "baz"));
+}
+
+pub fn stringListContainsAllIgnoreCase(list: []const []const u8, subsets: []const []const u8) bool {
+    for (subsets) |s1| {
+        if (!stringListContainsIgnoreCase(list, s1)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+test "stringListContainsAllIgnoreCase" {
+    testing.log_level = .info;
+    try testing.expect(stringListContainsAllIgnoreCase(
+        ([_][]const u8{ "foo", "bar" })[0..],
+        ([_][]const u8{})[0..],
+    ));
+    try testing.expect(stringListContainsAllIgnoreCase(
+        ([_][]const u8{ "foo", "bar", "baz" })[0..],
+        ([_][]const u8{ "baz", "foo" })[0..],
+    ));
+    try testing.expect(!stringListContainsAllIgnoreCase(
+        ([_][]const u8{ "foo", "bar" })[0..],
+        ([_][]const u8{"baz"})[0..],
+    ));
 }

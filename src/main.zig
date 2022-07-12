@@ -4,7 +4,10 @@ const sqlite = @import("sqlite");
 const LineReader = @import("io.zig").LineReader;
 const ndjson = @import("ndjson.zig");
 const eqlStringList = @import("string.zig").eqlStringList;
-const hasCommonIgnoreCaseInOptCsv = @import("string.zig").hasCommonIgnoreCaseInOptCsv;
+const parseOptionalCsv = @import("string.zig").parseOptionalCsv;
+const hasCommonIgnoreCaseInStringList = @import("string.zig").hasCommonIgnoreCaseInStringList;
+const stringListContainsAllIgnoreCase = @import("string.zig").stringListContainsAllIgnoreCase;
+const stringListContainsIgnoreCase = @import("string.zig").stringListContainsIgnoreCase;
 const sql = @import("sql.zig");
 
 const debug = std.debug;
@@ -64,9 +67,15 @@ pub fn main() anyerror!void {
         batch_size = b;
     }
 
-    const int_columns = res.args.@"int-columns";
-    const real_columns = res.args.@"real-columns";
-    if (hasCommonIgnoreCaseInOptCsv(int_columns, real_columns)) {
+    const allocator = std.heap.page_allocator;
+
+    const int_columns = try parseOptionalCsv(res.args.@"int-columns", allocator);
+    defer allocator.free(int_columns);
+
+    const real_columns = try parseOptionalCsv(res.args.@"real-columns", allocator);
+    defer allocator.free(real_columns);
+
+    if (hasCommonIgnoreCaseInStringList(int_columns, real_columns)) {
         try std.fmt.format(std.io.getStdErr().writer(), "Same column is both in \"--int-columns\" and \"--real-columns\"\n\n", .{});
         return;
     }
@@ -87,8 +96,6 @@ pub fn main() anyerror!void {
         return clap.help(std.io.getStdErr().writer(), clap.Help, &params, .{});
     }
     const input_filename = res.positionals[0];
-
-    const allocator = std.heap.page_allocator;
 
     const dsn = if (res.args.db) |dsn| dsn else {
         try std.fmt.format(std.io.getStdErr().writer(), "Option \"--db\" is required.\n\n", .{});
@@ -129,7 +136,18 @@ pub fn main() anyerror!void {
         try line_parser.parseLine(allocator, line);
 
         if (line_number == 1) {
-            try sql.createTable(allocator, &db, table_name, line_parser.labels.items, int_columns, real_columns);
+            if (!stringListContainsAllIgnoreCase(line_parser.labels.items, int_columns)) {
+                try std.fmt.format(std.io.getStdErr().writer(), "columns in \"--int-columns\" not in the labels of input rows.\n\n", .{});
+                return;
+            }
+            if (!stringListContainsAllIgnoreCase(line_parser.labels.items, real_columns)) {
+                try std.fmt.format(std.io.getStdErr().writer(), "columns in \"--real-columns\" not in the labels of input rows.\n\n", .{});
+                return;
+            }
+
+            const types = try buildColumnTypes(allocator, line_parser.labels.items, int_columns, real_columns);
+            defer allocator.free(types);
+            try sql.createTable(allocator, &db, table_name, line_parser.labels.items, types);
             stmt = try sql.prepareInsertLog(allocator, &db, table_name, line_parser.labels.items);
         } else {
             if (!eqlStringList(line_parser.labels.items[0..], first_line_parser.labels.items[0..])) {
@@ -153,4 +171,24 @@ pub fn main() anyerror!void {
         line_number += 1;
     }
     if (savepoint) |*sp| sp.commit();
+}
+
+// Caller must call allocator.free to return value after use.
+fn buildColumnTypes(
+    allocator: std.mem.Allocator,
+    columns: []const []const u8,
+    int_columns: []const []const u8,
+    real_columns: []const []const u8,
+) ![]const []const u8 {
+    var types = try allocator.alloc([]const u8, columns.len);
+    for (columns) |column, i| {
+        const @"type" = if (stringListContainsIgnoreCase(int_columns, column))
+            "INTEGER"
+        else if (stringListContainsIgnoreCase(real_columns, column))
+            "REAL"
+        else
+            "TEXT";
+        types[i] = @"type";
+    }
+    return types;
 }
