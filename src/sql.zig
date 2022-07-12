@@ -1,7 +1,14 @@
 const std = @import("std");
 const sqlite = @import("sqlite");
 
-pub fn createTable(allocator: std.mem.Allocator, db: *sqlite.Db, table_name: []const u8, columns: [][]const u8) !void {
+pub fn createTable(
+    allocator: std.mem.Allocator,
+    db: *sqlite.Db,
+    table_name: []const u8,
+    columns: [][]const u8,
+    int_columns: ?[]const u8,
+    real_columns: ?[]const u8,
+) !void {
     var buf = std.ArrayList(u8).init(allocator);
     defer buf.deinit();
 
@@ -13,7 +20,11 @@ pub fn createTable(allocator: std.mem.Allocator, db: *sqlite.Db, table_name: []c
             try buf.appendSlice(", ");
         }
         try buf.appendSlice(column);
-        try buf.appendSlice(" TEXT");
+        if (std.mem.eql(u8, column, "msec")) {
+            try buf.appendSlice(" REAL");
+        } else {
+            try buf.appendSlice(" TEXT");
+        }
     }
     try buf.appendSlice(")");
 

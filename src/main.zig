@@ -4,6 +4,7 @@ const sqlite = @import("sqlite");
 const LineReader = @import("io.zig").LineReader;
 const ndjson = @import("ndjson.zig");
 const eqlStringList = @import("string.zig").eqlStringList;
+const hasCommonIgnoreCaseInOptCsv = @import("string.zig").hasCommonIgnoreCaseInOptCsv;
 const sql = @import("sql.zig");
 
 const debug = std.debug;
@@ -27,6 +28,8 @@ pub fn main() anyerror!void {
         \\--table <str>          Table name to create or to append records to.
         \\--format <str>         Choose a log format from "ndjson" (default) or "ltsv".
         \\--batch <usize>        Batch size of insert operations in a transaction (default: 1000).
+        \\--int-columns <str>    comma separated list of INTEGER column names.
+        \\--real-columns <str>   comma separated list of REAL column names.
         \\-h, --help             Display this help and exit.
         \\--version              Show version and exit.
         \\<str>...
@@ -59,6 +62,13 @@ pub fn main() anyerror!void {
     var batch_size: usize = 1000;
     if (res.args.batch) |b| {
         batch_size = b;
+    }
+
+    const int_columns = res.args.@"int-columns";
+    const real_columns = res.args.@"real-columns";
+    if (hasCommonIgnoreCaseInOptCsv(int_columns, real_columns)) {
+        try std.fmt.format(std.io.getStdErr().writer(), "Same column is both in \"--int-columns\" and \"--real-columns\"\n\n", .{});
+        return;
     }
 
     // const log_fmt = if (res.args.format) |fmt| blk: {
@@ -119,7 +129,7 @@ pub fn main() anyerror!void {
         try line_parser.parseLine(allocator, line);
 
         if (line_number == 1) {
-            try sql.createTable(allocator, &db, table_name, line_parser.labels.items);
+            try sql.createTable(allocator, &db, table_name, line_parser.labels.items, int_columns, real_columns);
             stmt = try sql.prepareInsertLog(allocator, &db, table_name, line_parser.labels.items);
         } else {
             if (!eqlStringList(line_parser.labels.items[0..], first_line_parser.labels.items[0..])) {
