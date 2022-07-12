@@ -1,9 +1,16 @@
 const std = @import("std");
 const sqlite = @import("sqlite");
 
+pub fn enableStrictMode(
+    db: *sqlite.Db,
+) !void {
+    try db.exec("PRAGMA strict=ON;", .{}, .{});
+}
+
 pub fn createTable(
     allocator: std.mem.Allocator,
     db: *sqlite.Db,
+    strict: bool,
     table_name: []const u8,
     columns: []const []const u8,
     types: []const []const u8,
@@ -19,10 +26,13 @@ pub fn createTable(
             try buf.appendSlice(", ");
         }
         try buf.appendSlice(column);
-            try buf.append(' ');
-            try buf.appendSlice(types[i]);
+        try buf.append(' ');
+        try buf.appendSlice(types[i]);
     }
     try buf.append(')');
+    if (strict) {
+        try buf.appendSlice(" STRICT");
+    }
 
     try db.execDynamic(buf.toOwnedSlice(), .{}, .{});
 }

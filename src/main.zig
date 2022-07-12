@@ -31,8 +31,9 @@ pub fn main() anyerror!void {
         \\--table <str>          Table name to create or to append records to.
         \\--format <str>         Choose a log format from "ndjson" (default) or "ltsv".
         \\--batch <usize>        Batch size of insert operations in a transaction (default: 1000).
-        \\--int-columns <str>    comma separated list of INTEGER column names.
-        \\--real-columns <str>   comma separated list of REAL column names.
+        \\--int-columns <str>    Comma separated list of INTEGER column names.
+        \\--real-columns <str>   Comma separated list of REAL column names.
+        \\--strict-table         Enable SQLite Strict mode.
         \\-h, --help             Display this help and exit.
         \\--version              Show version and exit.
         \\<str>...
@@ -117,6 +118,11 @@ pub fn main() anyerror!void {
     });
     defer db.deinit();
 
+    const strict_mode = res.args.@"strict-table";
+    if (strict_mode) {
+        try sql.enableStrictMode(&db);
+    }
+
     var first_line_parser = ndjson.Parser{};
     defer first_line_parser.deinit(allocator);
     var line_parser = ndjson.Parser{};
@@ -147,7 +153,7 @@ pub fn main() anyerror!void {
 
             const types = try buildColumnTypes(allocator, line_parser.labels.items, int_columns, real_columns);
             defer allocator.free(types);
-            try sql.createTable(allocator, &db, table_name, line_parser.labels.items, types);
+            try sql.createTable(allocator, &db, strict_mode, table_name, line_parser.labels.items, types);
             stmt = try sql.prepareInsertLog(allocator, &db, table_name, line_parser.labels.items);
         } else {
             if (!eqlStringList(line_parser.labels.items[0..], first_line_parser.labels.items[0..])) {
