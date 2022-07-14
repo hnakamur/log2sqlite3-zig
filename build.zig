@@ -53,4 +53,5 @@ fn addPackages(step: *std.build.LibExeObjStep) void {
     step.linkSystemLibrary("sqlite3");
     step.addPackage(.{ .name = "sqlite", .source = .{ .path = "deps/zig-sqlite/sqlite.zig" } });
     step.addPackage(.{ .name = "clap", .source = .{ .path = "deps/zig-clap/clap.zig" } });
+    step.addPackage(.{ .name = "datetime", .source = .{ .path = "deps/zig-datetime/src/main.zig" } });
 }
